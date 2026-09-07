@@ -13,7 +13,6 @@ app.py
 النسخة: 1.0.0 - 2026-09-03
 """
 
-
 from __future__ import annotations
 
 from datetime import datetime
@@ -120,6 +119,19 @@ def logout_button():
         st.rerun()
 
 
+def _handle_stale_item_error():
+    """يُستدعى لما عملية كتابة تفشل لأن العنصر ما عاد موجود بشيت التكليفات
+    (مثلاً أعيد توزيعه، أو الصفحة كانت مفتوحة بنسخة قديمة مخزَّنة). نحدّث
+    الكاش ونرجّع القانوني/ة للقائمة المحدَّثة بدل ما نطيح التطبيق.
+    الرسالة تُخزَّن بالجلسة وتُعرض بعد الـrerun (st.warning قبل st.rerun
+    مباشرة ما بتوصل للمستخدم أبداً - الـrerun بيلغيها قبل ما تترسم)."""
+    da.get_assignments_df.clear()
+    da.get_articles_df.clear()
+    st.session_state.pop("selected_pmk", None)
+    st.session_state["pending_notice"] = "هذا العنصر تغيّر أو ما عاد متوفر بنفس الحالة - رجّعناك للقائمة المحدَّثة."
+    st.rerun()
+
+
 # ---------------------------------------------------------------------------
 # تسجيل الدخول
 # ---------------------------------------------------------------------------
@@ -196,9 +208,13 @@ def render_item_detail(username: str, item: pd.Series):
 
     started_key = f"marked_started_{pmk_id}"
     if item["الحالة"] == sc.STATUS_NOT_STARTED and not st.session_state.get(started_key):
-        da.update_assignment(pmk_id, status=sc.STATUS_IN_PROGRESS)
-        st.session_state[started_key] = True
-        st.rerun()
+        try:
+            da.update_assignment(pmk_id, status=sc.STATUS_IN_PROGRESS)
+            st.session_state[started_key] = True
+            st.rerun()
+        except ValueError:
+            _handle_stale_item_error()
+            return
 
     articles_df = da.get_item_articles(pmk_id)
     h2("مواد القانون")
@@ -214,14 +230,20 @@ def render_item_detail(username: str, item: pd.Series):
         with col2:
             st.write("")
             if st.button("حفظ", key=f"save_{pmk_id}_{art_num}", width='stretch'):
-                da.save_article(pmk_id, art_num, new_text, username)
-                st.toast("تم حفظ المادة")
-                st.rerun()
+                try:
+                    da.save_article(pmk_id, art_num, new_text, username)
+                    st.toast("تم حفظ المادة")
+                    st.rerun()
+                except ValueError:
+                    _handle_stale_item_error()
         with col3:
             st.write("")
             if st.button("حذف", key=f"del_{pmk_id}_{art_num}", width='stretch'):
-                da.delete_article(pmk_id, art_num)
-                st.rerun()
+                try:
+                    da.delete_article(pmk_id, art_num)
+                    st.rerun()
+                except ValueError:
+                    _handle_stale_item_error()
 
     slots_key = f"new_slots_{pmk_id}"
     if slots_key not in st.session_state:
@@ -239,10 +261,13 @@ def render_item_detail(username: str, item: pd.Series):
                 if not num_val.strip() or not text_val.strip():
                     st.error("لازم رقم ونص المادة قبل الحفظ.")
                 else:
-                    da.save_article(pmk_id, num_val.strip(), text_val, username)
-                    st.session_state[slots_key].remove(slot_id)
-                    st.toast("تم حفظ المادة")
-                    st.rerun()
+                    try:
+                        da.save_article(pmk_id, num_val.strip(), text_val, username)
+                        st.session_state[slots_key].remove(slot_id)
+                        st.toast("تم حفظ المادة")
+                        st.rerun()
+                    except ValueError:
+                        _handle_stale_item_error()
 
     if st.button("+ إضافة مادة", key=f"add_{pmk_id}"):
         next_slot = (max(st.session_state[slots_key]) + 1) if st.session_state[slots_key] else 1
@@ -255,15 +280,21 @@ def render_item_detail(username: str, item: pd.Series):
     col1, col2 = st.columns(2)
     with col1:
         if st.button("حفظ الملاحظات ومتابعة لاحقاً", key=f"savelater_{pmk_id}", width='stretch'):
-            da.update_assignment(pmk_id, notes=notes)
-            st.toast("تم الحفظ")
-            st.rerun()
+            try:
+                da.update_assignment(pmk_id, notes=notes)
+                st.toast("تم الحفظ")
+                st.rerun()
+            except ValueError:
+                _handle_stale_item_error()
     with col2:
         if st.button("إنهاء هذا العنصر", key=f"finish_{pmk_id}", width='stretch', type="primary"):
-            da.update_assignment(pmk_id, status=sc.STATUS_DONE, notes=notes)
-            st.session_state.pop("selected_pmk", None)
-            st.toast("تم إنهاء العنصر")
-            st.rerun()
+            try:
+                da.update_assignment(pmk_id, status=sc.STATUS_DONE, notes=notes)
+                st.session_state.pop("selected_pmk", None)
+                st.toast("تم إنهاء العنصر")
+                st.rerun()
+            except ValueError:
+                _handle_stale_item_error()
 
     if st.button("رجوع للقائمة", key=f"back_{pmk_id}"):
         st.session_state.pop("selected_pmk", None)
@@ -273,6 +304,9 @@ def render_item_detail(username: str, item: pd.Series):
 def render_volunteer_view(username: str, display_name: str, gender: str):
     title = legal_title(gender)
     items = da.get_user_items(username)
+
+    if "pending_notice" in st.session_state:
+        st.warning(st.session_state.pop("pending_notice"))
 
     if "selected_pmk" in st.session_state:
         selected = items[items["pmk_ID"] == st.session_state["selected_pmk"]]
