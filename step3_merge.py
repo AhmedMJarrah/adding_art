@@ -37,6 +37,11 @@ Reflected_Articles تركتها فاضية لأنه ما عندي مصدر بي�
     (اختياري) AMENDMENT_ARTICLES_CSV=data/amendment_articles_extract.csv
     (اختياري) JSON_OUTPUT_FILE=output/RefLaws_merged_<ts>.json (افتراضي)
 
+النسخة: 1.1.0 - 2026-09-07
+    - الناتج صار منسّق بمسافات بادئة (indent=2) زي الملف الأصلي، بدل سطر
+      واحد مضغوط - كان يعلّق بمحرري النصوص وfindstr على الملفات الكبيرة.
+      الحجم رح يكبر شوي (مساحة القرص متوفرة، مش مشكلة).
+
 النسخة: 1.0.0 - 2026-09-02
 """
 
@@ -55,7 +60,7 @@ from pathlib import Path
 import pandas as pd
 from dotenv import load_dotenv
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 # ---------------------------------------------------------------------------
 # تطبيع بسيط (نسخة مصغّرة عن lib_matching - بس اللي نحتاجه هون)
@@ -369,7 +374,7 @@ def main():
     out_path = Path(os.environ.get("JSON_OUTPUT_FILE", output_dir / f"RefLaws_merged_{ts}.json"))
     logger.info(f"كتابة الناتج: {out_path} (ممكن ياخذ وقت لأنه ملف كبير)")
     with open(out_path, "w", encoding="utf-8") as f:
-        json.dump(json_entries, f, ensure_ascii=False)
+        json.dump(json_entries, f, ensure_ascii=False, indent=2)
     logger.info(f"تم الحفظ: {out_path} ({len(json_entries)} عنصر بأعلى مستوى)")
 
     logger.info("=== ملخص ===")

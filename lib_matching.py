@@ -15,6 +15,15 @@ lib_matching.py
 كل نتيجة فيها تشابه اسم واطئ (حتى لو تطابق الرقم+السنة) تُعلَّم كمان
 needs_review=True حتى ما ننسحب على تطابق رقمي فقط بدون تأكيد الاسم.
 
+النسخة: 1.6.0 - 2026-09-07
+    - تصحيح خلل جوهري بـTier 2: رقم الجريدة مو معرّف فريد (عدة قوانين
+      مختلفة كلياً تُنشر بنفس عدد الجريدة - طبيعي، مش خطأ بيانات). الكود
+      كان ياخذ أول مرشح يطابق رقم الجريدة ويرجع فوراً بدون مقارنة الباقي -
+      فكان أحياناً يفوّت مرشح صحيح (تشابه محتوى تام) موجود بنفس القائمة.
+      صار يجمع كل المرشحين المطابقين لرقم الجريدة ويختار الأفضل تشابهاً،
+      نفس فلسفة حسم تعارض Tier 1. اكتُشفت بحالتين حقيقيتين (5 قوانين
+      مختلفة كلياً كانت تشترك برقم جريدة وحد لسنة 1933!).
+
 النسخة: 1.5.0 - 2026-09-06
     - تصحيح تعارض "نفس المحتوى مكرر حرفياً": لو المرشحين المتعارضين على
       نفس رقم+سنة كلهم متطابقين شبه تمام مع بعض (تعديل واحد مكرر فعلياً
@@ -66,7 +75,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import Iterable, Optional
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 
 # ---------------------------------------------------------------------------
 # تطبيع النصوص والأرقام
@@ -302,33 +311,41 @@ def match_one(number: Optional[str], year: Optional[str], name_norm: str,
             )
 
     # --- Tier 2: سنة + رقم/صفحة الجريدة (لما الرقم فاضي بأحد الطرفين) ---
-    # ملاحظة مهمة: كنت رفضت هاي الطبقة تماماً بنسخة سابقة بناءً على عيّنة
-    # صغيرة (8 حالات) قِيست بالتشابه الحرفي القديم. لما قِيست نفس الطبقة على
-    # عيّنة حقيقية أكبر (446 حالة) بمقياس المحتوى الجديد، طلع التوزيع واضح
-    # جداً: ~80% من الحالات درجتها 0.9+ (تطابق شبه تام - صحيحة فعلياً)، وبس
-    # ~13% قريبة من الصفر (تطابق جريدة صدفة - غلط). يعني الطبقة نفسها موثوقة،
-    # المشكلة كانت بالمقياس القديم بس. رجّعتها تستخدم نفس نظام الثقة المتدرج
-    # متل Tier 1.
+    # اكتشفنا خلل جوهري (2026-09-07): رقم الجريدة **مو معرّف فريد** - عدة
+    # قوانين مختلفة كلياً بتتنشر بنفس عدد الجريدة (طبيعي، مش خطأ بيانات:
+    # أكثر من قانون بينشر بنفس العدد). لقينا 5 قوانين مختلفة تشترك برقم
+    # جريدة وحد لسنة وحدة! الكود القديم كان ياخذ **أول** مرشح يطابق رقم
+    # الجريدة ويرجع فوراً، بدون ما يقارن باقي المرشحين - فكان أحياناً ياخذ
+    # الغلط ويفوّت المرشح الصحيح (تشابه محتوى تام) اللي جنبه بالضبط بنفس
+    # القائمة. لازم نجمع **كل** المرشحين المطابقين لرقم الجريدة أولاً،
+    # ونختار الأفضل تشابه محتوى بينهم - نفس فلسفة حسم تعارض Tier 1.
     if year is not None and magazine_number is not None:
-        for c in pool_by_year.get(year, []):
+        mag_candidates = [
+            c for c in pool_by_year.get(year, [])
             if c.magazine_number == magazine_number and (
                 magazine_page is None or c.magazine_page is None or c.magazine_page == magazine_page
-            ):
-                sim = content_similarity(name_norm, c.name_norm)
-                if sim >= NAME_SIM_ACCEPT_T1:
-                    return MatchResult(
-                        matched=True, tier="T2", score=sim,
-                        candidate_id=c.ref_id, candidate_name=c.display_name,
-                        needs_review=(sim < NAME_SIM_CONFIDENT_T1),
-                        note="" if sim >= NAME_SIM_CONFIDENT_T1
-                        else "مطابقة سنة+جريدة (الرقم فاضي) بتشابه محتوى متوسط - أكّد يدوياً",
-                    )
+            )
+        ]
+        if mag_candidates:
+            scored = sorted(
+                ((content_similarity(name_norm, c.name_norm), c) for c in mag_candidates),
+                key=lambda x: x[0], reverse=True,
+            )
+            best_sim, best_c = scored[0]
+            if best_sim >= NAME_SIM_ACCEPT_T1:
                 return MatchResult(
-                    matched=False, tier="T2", score=sim, ambiguous=True,
-                    candidate_id=c.ref_id, candidate_name=c.display_name,
-                    needs_review=True,
-                    note="مطابقة سنة+جريدة (الرقم فاضي) بس مافي تشابه محتوى - على الأغلب رقم جريدة تطابق صدفة",
+                    matched=True, tier="T2", score=best_sim,
+                    candidate_id=best_c.ref_id, candidate_name=best_c.display_name,
+                    needs_review=(best_sim < NAME_SIM_CONFIDENT_T1),
+                    note="" if best_sim >= NAME_SIM_CONFIDENT_T1
+                    else f"مطابقة سنة+جريدة ({len(mag_candidates)} مرشح بنفس رقم الجريدة) - أفضلهم تشابهاً، أكّد يدوياً",
                 )
+            all_names = "؛ ".join(f"{c.display_name}" for c in mag_candidates)
+            return MatchResult(
+                matched=False, tier="T2", score=best_sim, ambiguous=True,
+                candidate_name=all_names, needs_review=True,
+                note=f"مطابقة سنة+جريدة ({len(mag_candidates)} مرشح) بس مافي تشابه محتوى بأي منهم - على الأغلب رقم جريدة تطابق صدفة",
+            )
 
     # --- Tier 3: سنة + تشابه محتوى قوي (أضعف طبقة، مافي رقم يثبّتها) ---
     if year is not None:
